@@ -1,6 +1,11 @@
 # Vision Control API
 
-SQLite + FastAPI backend for auth and cameras.
+SQLite + FastAPI backend for auth, cameras, and video stream proxy.
+
+## Requirements
+
+- Python 3.11+
+- [FFmpeg](https://ffmpeg.org/download.html) in `PATH` (for RTSP/IP camera streams and connection tests)
 
 ## Setup
 
@@ -25,3 +30,8 @@ Or from repo root: `npm run dev:api`
 Seeded admin: `admin@visioncontrol.com` / `admin123`
 
 DB file: `backend/data/videolight.db`
+
+## Stream API
+
+- `POST /api/cameras/test` — probe camera URL (ffprobe)
+- `GET /api/cameras/{id}/stream?token=<jwt>` — MJPEG proxy for RTSP/IP/HTTP cameras

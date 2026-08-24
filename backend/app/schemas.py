@@ -74,3 +74,13 @@ class CameraUpdate(BaseModel):
     resolution: str | None = None
     fps: int | None = None
     sceneType: SceneType | None = None
+
+
+class CameraTestRequest(BaseModel):
+    sourceType: SourceType
+    sourceUrl: str = Field(min_length=1)
+
+
+class CameraTestResponse(BaseModel):
+    success: bool
+    message: str
