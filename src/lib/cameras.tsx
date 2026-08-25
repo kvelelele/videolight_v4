@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, ApiError } from './api';
-import { withMockDetections, type Camera, type CameraPayload } from './mockData';
+import { type Camera, type CameraPayload } from './mockData';
 import { useAuth } from './auth';
 
 interface CamerasContextType {
@@ -22,10 +22,8 @@ interface CamerasContextType {
 
 const CamerasContext = createContext<CamerasContextType | null>(null);
 
-type ApiCamera = Omit<Camera, 'detectionObjects'>;
-
-function mapCamera(raw: ApiCamera): Camera {
-  return withMockDetections(raw);
+function mapCamera(raw: Camera): Camera {
+  return raw;
 }
 
 export function CamerasProvider({ children }: { children: ReactNode }) {
@@ -42,7 +40,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const list = await api<ApiCamera[]>('/api/cameras');
+      const list = await api<Camera[]>('/api/cameras');
       setCameras(list.map(mapCamera));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось загрузить камеры');
@@ -57,7 +55,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const addCamera = useCallback(async (camera: CameraPayload): Promise<Camera> => {
-    const created = await api<ApiCamera>('/api/cameras', {
+    const created = await api<Camera>('/api/cameras', {
       method: 'POST',
       body: {
         id: camera.id,
@@ -79,7 +77,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
 
   const updateCamera = useCallback(
     async (id: string, camera: Partial<CameraPayload>): Promise<Camera> => {
-      const updated = await api<ApiCamera>(`/api/cameras/${id}`, {
+      const updated = await api<Camera>(`/api/cameras/${id}`, {
         method: 'PUT',
         body: {
           name: camera.name,

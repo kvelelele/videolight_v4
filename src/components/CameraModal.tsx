@@ -1,13 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ApiError } from '../lib/api';
-import {
-  defaultIpFields,
-  parseIpCameraUrl,
-  resolveSourceUrl,
-  testCameraConnection,
-  type IpCameraFields,
-} from '../lib/cameraForm';
+import { testCameraConnection } from '../lib/cameraForm';
 import type { Camera, CameraPayload } from '../lib/mockData';
+import { detectSourceType } from '../lib/streams';
 
 export default function CameraModal({
   onClose,
@@ -19,46 +14,35 @@ export default function CameraModal({
   editCamera?: Camera;
 }) {
   const isEdit = !!editCamera;
-  const parsedIp = editCamera?.sourceType === 'IP Camera' ? parseIpCameraUrl(editCamera.sourceUrl) : {};
 
   const [name, setName] = useState(editCamera?.name ?? '');
   const [location, setLocation] = useState(editCamera?.location ?? '');
-  const [sourceType, setSourceType] = useState<Camera['sourceType']>(editCamera?.sourceType ?? 'RTSP');
-  const [sourceUrl, setSourceUrl] = useState(
-    editCamera && (editCamera.sourceType === 'RTSP' || editCamera.sourceType === 'HTTP')
-      ? editCamera.sourceUrl
-      : ''
-  );
-  const [ipFields, setIpFields] = useState<IpCameraFields>({
-    ...defaultIpFields(),
-    ...parsedIp,
-  });
-  const [deviceIndex, setDeviceIndex] = useState(
-    editCamera?.sourceType === 'USB Camera' || editCamera?.sourceType === 'Web Camera'
-      ? editCamera.sourceUrl.replace('device://', '') || '0'
-      : '0'
-  );
+  const [sourceUrl, setSourceUrl] = useState(editCamera?.sourceUrl ?? '');
   const [testResult, setTestResult] = useState<'idle' | 'testing' | 'success' | 'fail'>('idle');
   const [testMessage, setTestMessage] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
-  const showUrlField = sourceType === 'RTSP' || sourceType === 'HTTP';
-  const showHostFields = sourceType === 'IP Camera';
-  const showDeviceField = sourceType === 'USB Camera' || sourceType === 'Web Camera';
+  const sourceType = useMemo(() => detectSourceType(sourceUrl), [sourceUrl]);
+  const isDevice = sourceType === 'USB Camera' || sourceType === 'Web Camera';
 
   const handleTestConnection = async () => {
-    const resolvedUrl = resolveSourceUrl(sourceType, sourceUrl, ipFields, deviceIndex);
-    if (!resolvedUrl) {
+    const url = sourceUrl.trim();
+    if (!url) {
       setTestResult('fail');
-      setTestMessage('Заполните параметры подключения');
+      setTestMessage('Вставьте URL потока');
+      return;
+    }
+    if (isDevice) {
+      setTestResult('fail');
+      setTestMessage('Сетевой тест недоступен для USB/Web камер');
       return;
     }
 
     setTestResult('testing');
     setTestMessage('');
     try {
-      const result = await testCameraConnection(sourceType, resolvedUrl);
+      const result = await testCameraConnection(sourceType, url);
       setTestResult(result.success ? 'success' : 'fail');
       setTestMessage(result.message);
     } catch (err) {
@@ -73,9 +57,9 @@ export default function CameraModal({
       return;
     }
 
-    const resolvedUrl = resolveSourceUrl(sourceType, sourceUrl, ipFields, deviceIndex);
-    if (!resolvedUrl && !showDeviceField) {
-      setSaveError('Укажите параметры подключения');
+    const url = sourceUrl.trim();
+    if (!url) {
+      setSaveError('Вставьте URL потока');
       return;
     }
 
@@ -87,7 +71,7 @@ export default function CameraModal({
         name: name.trim(),
         location: location.trim(),
         sourceType,
-        sourceUrl: resolvedUrl,
+        sourceUrl: url,
         status: editCamera?.status ?? 'online',
         lastConnected: editCamera?.lastConnected ?? new Date().toLocaleString('ru-RU'),
         resolution: editCamera?.resolution ?? '1920 × 1080',
@@ -99,10 +83,6 @@ export default function CameraModal({
     } finally {
       setSaving(false);
     }
-  };
-
-  const updateIpField = (key: keyof IpCameraFields, value: string) => {
-    setIpFields((prev) => ({ ...prev, [key]: value }));
   };
 
   return (
@@ -143,109 +123,26 @@ export default function CameraModal({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Тип источника</label>
-            <select
-              value={sourceType}
-              onChange={(e) => setSourceType(e.target.value as Camera['sourceType'])}
-              className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-            >
-              <option value="RTSP">RTSP</option>
-              <option value="IP Camera">IP Camera</option>
-              <option value="HTTP">HTTP</option>
-              <option value="USB Camera">USB Camera</option>
-              <option value="Web Camera">Web Camera</option>
-            </select>
+            <label className="block text-sm font-medium text-gray-700 mb-1">URL потока</label>
+            <input
+              type="text"
+              value={sourceUrl}
+              onChange={(e) => {
+                setSourceUrl(e.target.value);
+                setTestResult('idle');
+                setTestMessage('');
+              }}
+              placeholder="https://…/live.m3u8?a=… или rtsp://…"
+              className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-gray-500">Тип:</span>
+              <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                {sourceType}
+              </span>
+              <span className="text-xs text-gray-400">определяется автоматически</span>
+            </div>
           </div>
-
-          {showUrlField && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {sourceType === 'RTSP' ? 'RTSP URL' : 'HTTP Stream URL'}
-              </label>
-              <input
-                type="text"
-                value={sourceUrl}
-                onChange={(e) => setSourceUrl(e.target.value)}
-                placeholder={sourceType === 'RTSP' ? 'rtsp://192.168.1.100:554/stream1' : 'http://host/video или https://host/live.m3u8'}
-                className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-              />
-            </div>
-          )}
-
-          {showHostFields && (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Host</label>
-                  <input
-                    type="text"
-                    value={ipFields.host}
-                    onChange={(e) => updateIpField('host', e.target.value)}
-                    placeholder="192.168.1.100"
-                    className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
-                  <input
-                    type="text"
-                    value={ipFields.port}
-                    onChange={(e) => updateIpField('port', e.target.value)}
-                    placeholder="554"
-                    className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Stream path</label>
-                <input
-                  type="text"
-                  value={ipFields.path}
-                  onChange={(e) => updateIpField('path', e.target.value)}
-                  placeholder="/stream1"
-                  className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                  <input
-                    type="text"
-                    value={ipFields.username}
-                    onChange={(e) => updateIpField('username', e.target.value)}
-                    placeholder="admin"
-                    className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                  <input
-                    type="password"
-                    value={ipFields.password}
-                    onChange={(e) => updateIpField('password', e.target.value)}
-                    placeholder="••••••••"
-                    className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-                  />
-                </div>
-              </div>
-            </>
-          )}
-
-          {showDeviceField && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {sourceType === 'USB Camera' ? 'Camera Index' : 'Browser Camera'}
-              </label>
-              <input
-                type="text"
-                value={deviceIndex}
-                onChange={(e) => setDeviceIndex(e.target.value)}
-                placeholder="0"
-                className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-              />
-              <p className="mt-1 text-xs text-gray-400">Воспроизведение USB/Web камер будет добавлено позже</p>
-            </div>
-          )}
 
           {testResult === 'testing' && (
             <div className="flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">
@@ -286,7 +183,7 @@ export default function CameraModal({
         <div className="flex items-center justify-between border-t border-gray-100 px-5 py-4">
           <button
             onClick={() => void handleTestConnection()}
-            disabled={showDeviceField}
+            disabled={isDevice}
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
             Проверить подключение

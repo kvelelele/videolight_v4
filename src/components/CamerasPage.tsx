@@ -234,14 +234,6 @@ function CameraList({
                 <p className="text-xs text-gray-400 truncate">{camera.location}</p>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-medium text-gray-400 uppercase">{camera.sourceType}</span>
-                  {camera.status === 'online' && (
-                    <span className="text-xs font-medium text-gray-500">
-                      {camera.detectionObjects.length} {declOfNum(camera.detectionObjects.length, ['объект', 'объекта', 'объектов'])}
-                    </span>
-                  )}
-                  {camera.status !== 'online' && (
-                    <span className="text-xs text-gray-400">—</span>
-                  )}
                 </div>
               </div>
             </button>
@@ -252,13 +244,8 @@ function CameraList({
   );
 }
 
-function declOfNum(n: number, titles: [string, string, string]): string {
-  return titles[n % 10 === 1 && n % 100 !== 11 ? 0 : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 1 : 2];
-}
-
 /* ─── Video Stream ─── */
 function VideoStream({ camera }: { camera: Camera; isAdmin: boolean }) {
-  const [showAnalytics, setShowAnalytics] = useState(true);
   const [streamState, setStreamState] = useState<StreamState>('loading');
 
   const status =
@@ -286,21 +273,6 @@ function VideoStream({ camera }: { camera: Camera; isAdmin: boolean }) {
               <span className="text-xs text-gray-400">{camera.resolution} · {camera.fps} FPS</span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowAnalytics(!showAnalytics)}
-              className={`rounded-lg border p-1.5 transition-colors ${
-                showAnalytics
-                  ? 'border-indigo-200 bg-indigo-50 text-indigo-600'
-                  : 'border-gray-200 text-gray-400 hover:bg-gray-50 hover:text-gray-600'
-              }`}
-              title="Настройки отображения аналитики"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
-              </svg>
-            </button>
-          </div>
         </div>
 
         {/* Video player */}
@@ -310,69 +282,6 @@ function VideoStream({ camera }: { camera: Camera; isAdmin: boolean }) {
           </div>
         </div>
       </div>
-
-      {/* Analytics panel */}
-      {showAnalytics && streamState === 'playing' && (
-        <AnalyticsPanel camera={camera} />
-      )}
-    </div>
-  );
-}
-
-/* ─── Analytics Panel ─── */
-function AnalyticsPanel({ camera }: { camera: Camera }) {
-  const people = camera.detectionObjects.filter((o) => o.type === 'person');
-  const cars = camera.detectionObjects.filter((o) => o.type === 'car');
-
-  return (
-    <div className="w-72 flex-shrink-0 border-l border-gray-200 bg-white overflow-y-auto">
-      <div className="p-4">
-        <h3 className="text-sm font-semibold text-gray-900 mb-3">Видеоаналитика</h3>
-
-        {/* Stats */}
-        <div className="space-y-2 mb-4">
-          <StatRow label="Объекты в кадре" value={String(camera.detectionObjects.length)} />
-          <StatRow label="Люди" value={String(people.length)} />
-          <StatRow label="Автомобили" value={String(cars.length)} />
-          <div className="border-t border-gray-100 pt-2 mt-2">
-            <StatRow label="Статус аналитики" value="Активна" valueColor="text-green-600" />
-            <StatRow label="Модель" value="Object Detection" />
-            <StatRow label="Tracking" value="Активен" valueColor="text-green-600" />
-          </div>
-        </div>
-
-        {/* Objects list */}
-        <div className="border-t border-gray-100 pt-3">
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Обнаруженные объекты</h4>
-          <div className="space-y-2">
-            {camera.detectionObjects.map((obj) => (
-              <div
-                key={obj.id}
-                className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5"
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`h-2 w-2 rounded-full ${obj.type === 'person' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                  <span className="text-sm font-medium text-gray-900">
-                    {obj.type === 'person' ? 'Человек' : 'Автомобиль'}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-400 font-mono">
-                  x {Math.round(obj.x)} · y {Math.round(obj.y)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StatRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-xs text-gray-500">{label}</span>
-      <span className={`text-xs font-semibold ${valueColor ?? 'text-gray-900'}`}>{value}</span>
     </div>
   );
 }

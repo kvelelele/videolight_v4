@@ -12,15 +12,21 @@ export function isHlsUrl(url: string): boolean {
   return path.includes('.m3u8');
 }
 
+export function detectSourceType(url: string): Camera['sourceType'] {
+  const trimmed = url.trim().toLowerCase();
+  if (!trimmed) return 'HTTP';
+  if (trimmed.startsWith('rtsp://')) return 'RTSP';
+  if (trimmed.startsWith('device://')) return 'USB Camera';
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return 'HTTP';
+  if (trimmed.includes('.m3u8')) return 'HTTP';
+  return 'HTTP';
+}
+
 export function shouldUseDirectStream(camera: Camera): boolean {
-  if (camera.sourceType !== 'HTTP' || !camera.sourceUrl.trim()) {
-    return false;
-  }
-  // HLS and similar formats need backend FFmpeg transcode
-  if (isHlsUrl(camera.sourceUrl)) {
-    return false;
-  }
-  return true;
+  // HLS always goes through backend proxy (Referer / token handling).
+  // Other HTTP streams (MJPEG etc.) can play directly when possible.
+  if (isHlsUrl(camera.sourceUrl)) return false;
+  return camera.sourceType === 'HTTP' && !!camera.sourceUrl.trim();
 }
 
 export function getProxiedStreamUrl(cameraId: string): string {

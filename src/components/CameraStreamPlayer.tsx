@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Hls from 'hls.js';
 import type { Camera } from '../lib/mockData';
 import {
   getProxiedStreamUrl,
+  isHlsUrl,
   isStreamSupported,
   isVideoFileUrl,
   shouldUseDirectStream,
@@ -14,71 +16,17 @@ interface CameraStreamPlayerProps {
   onStateChange?: (state: StreamState) => void;
 }
 
-function DetectionOverlay({ camera }: { camera: Camera }) {
-  const objects = camera.detectionObjects;
-  const [frame, setFrame] = useState(0);
-
-  useEffect(() => {
-    if (objects.length === 0) return;
-    const interval = setInterval(() => {
-      setFrame((f) => (f + 1) % 60);
-    }, 100);
-    return () => clearInterval(interval);
-  }, [objects.length]);
-
-  const animatedObjects = objects.map((obj, i) => {
-    const drift = Math.sin((frame + i * 20) * 0.1) * 8;
-    return {
-      ...obj,
-      x: obj.x + drift,
-      y: obj.y + Math.cos((frame + i * 15) * 0.08) * 4,
-    };
-  });
-
-  return (
-    <>
-      {animatedObjects.map((obj) => (
-        <div
-          key={obj.id}
-          className="absolute pointer-events-none"
-          style={{
-            left: `${(obj.x / 1920) * 100}%`,
-            top: `${(obj.y / 1080) * 100}%`,
-            width: `${(obj.width / 1920) * 100}%`,
-            height: `${(obj.height / 1080) * 100}%`,
-          }}
-        >
-          <div
-            className={`absolute inset-0 border-2 rounded-sm ${
-              obj.type === 'person' ? 'border-emerald-400' : 'border-amber-400'
-            }`}
-          >
-            <div
-              className={`absolute -inset-0.5 rounded-sm opacity-20 animate-pulse ${
-                obj.type === 'person' ? 'bg-emerald-400' : 'bg-amber-400'
-              }`}
-            />
-          </div>
-          <div
-            className={`absolute -top-6 left-0 flex items-center gap-1.5 rounded-t px-1.5 py-0.5 text-[10px] font-bold text-white whitespace-nowrap ${
-              obj.type === 'person' ? 'bg-emerald-500' : 'bg-amber-500'
-            }`}
-          >
-            <span>{obj.label}</span>
-          </div>
-        </div>
-      ))}
-    </>
-  );
-}
-
 export default function CameraStreamPlayer({ camera, onStateChange }: CameraStreamPlayerProps) {
   const [streamState, setStreamState] = useState<StreamState>('loading');
   const [useProxy, setUseProxy] = useState(!shouldUseDirectStream(camera));
   const [retryKey, setRetryKey] = useState(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  const isHls = isHlsUrl(camera.sourceUrl);
   const proxiedUrl = useMemo(() => getProxiedStreamUrl(camera.id), [camera.id, retryKey]);
   const directUrl = camera.sourceUrl;
+  // HLS must use backend proxy so Referer/UA are applied server-side.
+  const hlsSourceUrl = isHls ? proxiedUrl : directUrl;
 
   useEffect(() => {
     setStreamState('loading');
@@ -90,10 +38,61 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
     onStateChange?.(streamState);
   }, [streamState, onStateChange]);
 
+  // HLS via proxied playlist (rewritten .m3u8 → /hls-asset segments).
+  useEffect(() => {
+    if (!isHls) return;
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    let hls: Hls | null = null;
+    let cancelled = false;
+
+    const markPlaying = () => {
+      if (!cancelled) setStreamState('playing');
+    };
+    const markError = () => {
+      if (!cancelled) setStreamState('error');
+    };
+
+    if (Hls.isSupported()) {
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+      });
+      hls.loadSource(hlsSourceUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        void video.play().then(markPlaying).catch(markError);
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) markError();
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = hlsSourceUrl;
+      video.addEventListener('loadeddata', markPlaying);
+      video.addEventListener('error', markError);
+    } else {
+      markError();
+    }
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener('loadeddata', markPlaying);
+      video.removeEventListener('error', markError);
+      if (hls) {
+        hls.destroy();
+      } else {
+        video.removeAttribute('src');
+        video.load();
+      }
+    };
+  }, [isHls, hlsSourceUrl, retryKey]);
+
   const handleLoad = () => setStreamState('playing');
 
   const handleError = () => {
-    if (!useProxy && shouldUseDirectStream(camera)) {
+    if (!useProxy && shouldUseDirectStream(camera) && !isHls) {
       setUseProxy(true);
       setStreamState('loading');
       return;
@@ -121,10 +120,15 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
           </svg>
         </div>
         <p className="text-sm font-medium text-gray-300">Видеопоток недоступен</p>
-        <p className="mt-1 text-xs text-gray-500">Проверьте URL и доступность камеры</p>
+        <p className="mt-1 text-xs text-gray-500">
+          {isHls
+            ? 'HLS-токен мог истечь — скопируйте свежий live.m3u8?a=… со страницы камеры'
+            : 'Проверьте URL и доступность камеры'}
+        </p>
         <button
           onClick={() => {
             setStreamState('loading');
+            setUseProxy(!shouldUseDirectStream(camera));
             setRetryKey((k) => k + 1);
           }}
           className="mt-4 rounded-lg border border-gray-600 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-800 transition-colors"
@@ -136,7 +140,7 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
   }
 
   const streamUrl = useProxy ? proxiedUrl : directUrl;
-  const showVideo = isVideoFileUrl(useProxy ? camera.sourceUrl : directUrl);
+  const showVideo = isHls || isVideoFileUrl(useProxy ? camera.sourceUrl : directUrl);
 
   return (
     <div className="relative overflow-hidden rounded-lg bg-gray-800 w-full max-h-[calc(100vh-16rem)]">
@@ -151,14 +155,15 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
 
       {showVideo ? (
         <video
-          key={`${streamUrl}-${retryKey}`}
-          src={streamUrl}
+          key={`${isHls ? hlsSourceUrl : streamUrl}-${retryKey}`}
+          ref={videoRef}
+          src={isHls ? undefined : streamUrl}
           autoPlay
           muted
           playsInline
           controls
-          onLoadedData={handleLoad}
-          onError={handleError}
+          onLoadedData={isHls ? undefined : handleLoad}
+          onError={isHls ? undefined : handleError}
           className="block w-full h-auto max-h-[calc(100vh-16rem)] object-contain"
           style={{ aspectRatio: '16/9' }}
         />
@@ -172,10 +177,6 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
           className="block w-full h-auto max-h-[calc(100vh-16rem)] object-contain"
           style={{ aspectRatio: '16/9' }}
         />
-      )}
-
-      {streamState === 'playing' && camera.detectionObjects.length > 0 && (
-        <DetectionOverlay camera={camera} />
       )}
 
       <div className="absolute bottom-2 left-2 rounded-md bg-black/50 px-2 py-1">
