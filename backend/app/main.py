@@ -3,8 +3,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.analytics.pipeline import pipeline_manager
 from app.database import Base, SessionLocal, engine
-from app.routers import auth, cameras
+from app.routers import analytics, auth, cameras
 from app.seed import seed_if_empty
 
 
@@ -17,6 +18,7 @@ async def lifespan(_: FastAPI):
     finally:
         db.close()
     yield
+    await pipeline_manager.shutdown_all()
 
 
 app = FastAPI(title="Vision Control API", lifespan=lifespan)
@@ -31,6 +33,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(cameras.router)
+app.include_router(analytics.router)
 
 
 @app.get("/api/health")

@@ -74,6 +74,17 @@ def needs_ffmpeg_transcode(source_url: str) -> bool:
     return is_hls_url(source_url) or any(ext in lower for ext in (".mp4", ".webm", ".mov", ".ogg"))
 
 
+def _ffmpeg_headers_arg(source_url: str) -> list[str]:
+    """Browser-like headers for HTTP(S)/HLS sources that block bare ffmpeg."""
+    lower = source_url.lower()
+    if not (lower.startswith("http://") or lower.startswith("https://")):
+        return []
+    headers = upstream_headers(source_url)
+    # ffmpeg expects a single string with CRLF-separated header lines.
+    header_lines = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+    return ["-headers", header_lines]
+
+
 def _ffmpeg_input_args(source_url: str) -> list[str]:
     args: list[str] = []
     lower = source_url.lower()
@@ -90,6 +101,7 @@ def _ffmpeg_input_args(source_url: str) -> list[str]:
             "-reconnect_delay_max",
             "5",
         ])
+    args.extend(_ffmpeg_headers_arg(source_url))
     args.extend(["-i", source_url])
     return args
 

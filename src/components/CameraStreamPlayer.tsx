@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import type { Camera } from '../lib/mockData';
+import { useDetections } from '../lib/detections';
 import {
   getProxiedStreamUrl,
   isHlsUrl,
@@ -8,6 +9,8 @@ import {
   isVideoFileUrl,
   shouldUseDirectStream,
 } from '../lib/streams';
+import AnalyticsErrorBoundary from './AnalyticsErrorBoundary';
+import DetectionOverlay from './DetectionOverlay';
 
 type StreamState = 'loading' | 'playing' | 'error';
 
@@ -20,11 +23,30 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
   const [streamState, setStreamState] = useState<StreamState>('loading');
   const [useProxy, setUseProxy] = useState(!shouldUseDirectStream(camera));
   const [retryKey, setRetryKey] = useState(0);
+  const [analyticsReady, setAnalyticsReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
 
   const isHls = isHlsUrl(camera.sourceUrl);
   const proxiedUrl = useMemo(() => getProxiedStreamUrl(camera.id), [camera.id, retryKey]);
   const directUrl = camera.sourceUrl;
+  const streamUrl = useProxy ? proxiedUrl : directUrl;
+  const showVideo = isHls || isVideoFileUrl(useProxy ? camera.sourceUrl : directUrl);
+
+  // Delay analytics until playback is stable — avoids racing video mount / layout.
+  useEffect(() => {
+    if (streamState !== 'playing') {
+      setAnalyticsReady(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setAnalyticsReady(true), 750);
+    return () => window.clearTimeout(timer);
+  }, [streamState]);
+
+  const analyticsEnabled = analyticsReady;
+  const { frame: detectionFrame, connected: analyticsConnected, error: analyticsError } =
+    useDetections(camera.id, analyticsEnabled);
+  const mediaRef = showVideo ? videoRef : imgRef;
   // HLS must use backend proxy so Referer/UA are applied server-side.
   const hlsSourceUrl = isHls ? proxiedUrl : directUrl;
 
@@ -139,9 +161,6 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
     );
   }
 
-  const streamUrl = useProxy ? proxiedUrl : directUrl;
-  const showVideo = isHls || isVideoFileUrl(useProxy ? camera.sourceUrl : directUrl);
-
   return (
     <div className="relative overflow-hidden rounded-lg bg-gray-800 w-full max-h-[calc(100vh-16rem)]">
       {streamState === 'loading' && (
@@ -170,6 +189,7 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
       ) : (
         <img
           key={`${streamUrl}-${retryKey}`}
+          ref={imgRef}
           src={streamUrl}
           alt={camera.name}
           onLoad={handleLoad}
@@ -179,6 +199,23 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
         />
       )}
 
+      <AnalyticsErrorBoundary>
+        <DetectionOverlay
+          frame={detectionFrame}
+          mediaRef={mediaRef}
+          visible={analyticsEnabled}
+        />
+
+        {(analyticsConnected || analyticsError) && (
+          <div className="absolute top-2 right-2 rounded-md bg-black/50 px-2 py-1">
+            <span className={`text-[10px] ${analyticsError ? 'text-red-300' : 'text-emerald-300'}`}>
+              {analyticsError
+                ? 'Аналитика недоступна'
+                : `Детекция · ${detectionFrame?.tracks?.length ?? 0}`}
+            </span>
+          </div>
+        )}
+      </AnalyticsErrorBoundary>
       <div className="absolute bottom-2 left-2 rounded-md bg-black/50 px-2 py-1">
         <span className="text-[10px] text-gray-300">
           {camera.name} · {camera.resolution}
