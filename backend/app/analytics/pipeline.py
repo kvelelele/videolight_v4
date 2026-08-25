@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import WebSocket
 
 from app.analytics.capture import iter_frames
-from app.analytics.detector import CameraTracker
+from app.analytics.detector import CameraTracker, get_shared_model
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,8 @@ class AnalyticsPipeline:
         if self._task is not None and not self._task.done():
             return
         self._error = None
+        # Warm model in background so first detection isn't a multi-second download stall.
+        asyncio.create_task(asyncio.to_thread(get_shared_model))
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
@@ -83,28 +85,57 @@ class AnalyticsPipeline:
         backoff = 1.0
         while self._subscribers:
             try:
+                # Keep newest frame; drop intermediates while inference runs.
+                latest: tuple[Any, int, int, int, int] | None = None
+                inference_task: asyncio.Task[list] | None = None
+
                 async for frame, orig_w, orig_h, inf_w, inf_h in iter_frames(self.source_url):
                     if not self._subscribers:
                         break
 
+                    latest = (frame, orig_w, orig_h, inf_w, inf_h)
+
+                    if inference_task is not None and inference_task.done():
+                        try:
+                            tracks = inference_task.result()
+                            await self._broadcast(self._build_payload(tracks))
+                            self._error = None
+                            backoff = 1.0
+                        except Exception:
+                            logger.exception("Inference failed for camera %s", self.camera_id)
+                        inference_task = None
+
+                    if inference_task is not None:
+                        continue
+
                     now = time.monotonic()
                     if now - self._last_inference < self._min_interval:
                         continue
+                    if latest is None:
+                        continue
+
+                    frame_s, ow, oh, iw, ih = latest
+                    latest = None
                     self._last_inference = now
+                    self._frame_width = ow
+                    self._frame_height = oh
 
-                    self._frame_width = orig_w
-                    self._frame_height = orig_h
-                    scale_x = orig_w / inf_w
-                    scale_y = orig_h / inf_h
-
-                    tracks = await asyncio.to_thread(
-                        self._tracker.detect_and_track,
-                        frame,
-                        scale_x,
-                        scale_y,
+                    inference_task = asyncio.create_task(
+                        asyncio.to_thread(
+                            self._tracker.detect_and_track,
+                            frame_s,
+                            ow / iw,
+                            oh / ih,
+                        )
                     )
-                    payload = self._build_payload(tracks)
-                    await self._broadcast(payload)
+
+                if inference_task is not None:
+                    try:
+                        tracks = await inference_task
+                        if self._subscribers:
+                            await self._broadcast(self._build_payload(tracks))
+                    except Exception:
+                        logger.exception("Final inference failed for camera %s", self.camera_id)
 
                 if self._subscribers:
                     raise RuntimeError("Поток кадров завершился")
