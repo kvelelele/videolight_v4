@@ -46,8 +46,3 @@ export const CLASS_LABELS: Record<string, string> = {
   person: 'человек',
   car: 'авто',
 };
-
-// TEMP: removed in Task 4
-export function useDetections(_cameraId: string, _enabled: boolean) {
-  return { frame: null, connected: false, error: null };
-}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import type { Camera } from '../lib/mockData';
-import { useDetections } from '../lib/detections';
+import { useClientAnalytics } from '../lib/clientAnalytics';
 import {
   getProxiedStreamUrl,
   isHlsUrl,
@@ -44,9 +44,13 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
   }, [streamState]);
 
   const analyticsEnabled = analyticsReady;
-  const { frame: detectionFrame, connected: analyticsConnected, error: analyticsError } =
-    useDetections(camera.id, analyticsEnabled);
   const mediaRef = showVideo ? videoRef : imgRef;
+  const {
+    frame: detectionFrame,
+    ready: analyticsReadyFlag,
+    loading: analyticsLoading,
+    error: analyticsError,
+  } = useClientAnalytics(mediaRef, camera.id, analyticsEnabled);
   // HLS must use backend proxy so Referer/UA are applied server-side.
   const hlsSourceUrl = isHls ? proxiedUrl : directUrl;
 
@@ -206,12 +210,14 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
           visible={analyticsEnabled}
         />
 
-        {(analyticsConnected || analyticsError) && (
+        {(analyticsReadyFlag || analyticsLoading || analyticsError) && (
           <div className="absolute top-2 right-2 rounded-md bg-black/50 px-2 py-1">
             <span className={`text-[10px] ${analyticsError ? 'text-red-300' : 'text-emerald-300'}`}>
               {analyticsError
                 ? 'Аналитика недоступна'
-                : `Детекция · ${detectionFrame?.tracks?.length ?? 0}`}
+                : analyticsLoading
+                  ? 'Загрузка модели…'
+                  : `Детекция · ${detectionFrame?.tracks?.length ?? 0}`}
             </span>
           </div>
         )}
