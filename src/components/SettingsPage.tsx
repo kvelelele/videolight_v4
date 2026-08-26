@@ -57,44 +57,46 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        {/* Table */}
-        <div className="overflow-hidden rounded-xl border border-gray-200">
-          <table className="min-w-full divide-y divide-gray-100">
+        {/* Table — horizontal scroll when viewport is too narrow */}
+        <div className="overflow-x-auto rounded-xl border border-gray-200">
+          <table className="w-full min-w-[56rem] divide-y divide-gray-100">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Название</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Источник</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Тип</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Статус</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Последнее подключение</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Действия</th>
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Название</th>
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Источник</th>
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Тип</th>
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Статус</th>
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Последнее подключение</th>
+                <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Действия</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 bg-white">
               {cameras.map((camera) => (
                 <tr key={camera.id} className="hover:bg-gray-50/50 transition-colors">
-                  <td className="px-4 py-3">
+                  <td className="whitespace-nowrap px-4 py-3">
                     <div>
                       <p className="text-sm font-medium text-gray-900">{camera.name}</p>
                       <p className="text-xs text-gray-400">{camera.location}</p>
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <code className="text-xs text-gray-500 font-mono">{camera.sourceUrl}</code>
+                    <code className="block max-w-xs truncate text-xs text-gray-500 font-mono" title={camera.sourceUrl}>
+                      {camera.sourceUrl}
+                    </code>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="whitespace-nowrap px-4 py-3">
                     <span className="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
                       {camera.sourceType}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="whitespace-nowrap px-4 py-3">
                     <div className="flex items-center gap-1.5">
                       <span className={`h-1.5 w-1.5 rounded-full ${getStatusBg(camera.status)}`} />
                       <span className="text-xs font-medium text-gray-600">{getStatusLabel(camera.status)}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-500">{camera.lastConnected}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">{camera.lastConnected}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <button
                         onClick={() => setEditCamera(camera)}
