@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Callable, TypedDict
@@ -7,6 +8,7 @@ from typing import Callable, TypedDict
 from app.lighting.drivers.base import DriverResult, LightingDriver
 
 HEARTBEAT_GRACE_SEC = 20
+logger = logging.getLogger(__name__)
 
 
 class ControllerView(TypedDict):
@@ -46,6 +48,16 @@ class ScenarioEngine:
         state = self._controllers.get(controller_id)
         return state.desired_on if state is not None else False
 
+    def ensure_controller_config(
+        self, controller_id: str, *, enabled: bool, off_delay_sec: int
+    ) -> None:
+        state = self._ensure_controller_state(controller_id)
+        state.enabled = enabled
+        state.off_delay_sec = off_delay_sec
+
+    def forget_controller(self, controller_id: str) -> None:
+        self._controllers.pop(controller_id, None)
+
     async def set_manual(self, controller_id: str, on: bool) -> DriverResult:
         driver = self._get_driver(controller_id)
         if on:
@@ -78,9 +90,12 @@ class ScenarioEngine:
                 "enabled": state.enabled,
                 "off_delay_sec": state.off_delay_sec,
             }
-            await self._recompute_controller(controller_id, view, now)
+            try:
+                await self._recompute_controller(controller_id, view, now)
+            except Exception:
+                logger.exception("lighting recompute failed for %s", controller_id)
 
-        for controller_id, state in self._controllers.items():
+        for controller_id, state in list(self._controllers.items()):
             if not state.enabled:
                 continue
             if (
@@ -88,10 +103,13 @@ class ScenarioEngine:
                 and now >= state.off_deadline
                 and state.desired_on
             ):
-                driver = self._get_driver(controller_id)
-                await driver.turn_off()
-                state.desired_on = False
-                state.off_deadline = None
+                try:
+                    driver = self._get_driver(controller_id)
+                    await driver.turn_off()
+                    state.desired_on = False
+                    state.off_deadline = None
+                except Exception:
+                    logger.exception("lighting driver off failed for %s", controller_id)
 
     def _effective_present(self, camera_id: str, now: float) -> bool:
         state = self._cameras.get(camera_id)
@@ -105,6 +123,12 @@ class ScenarioEngine:
             for camera_id in self._get_camera_ids_for_controller(controller_id)
         )
 
+    def _presence_tracked(self, controller_id: str) -> bool:
+        return any(
+            camera_id in self._cameras
+            for camera_id in self._get_camera_ids_for_controller(controller_id)
+        )
+
     def _ensure_controller_state(self, controller_id: str) -> _ControllerState:
         if controller_id not in self._controllers:
             self._controllers[controller_id] = _ControllerState(
@@ -114,6 +138,14 @@ class ScenarioEngine:
                 enabled=True,
             )
         return self._controllers[controller_id]
+
+    async def _apply_driver_on(self, controller_id: str, state: _ControllerState) -> None:
+        try:
+            driver = self._get_driver(controller_id)
+            await driver.turn_on()
+            state.desired_on = True
+        except Exception:
+            logger.exception("lighting driver on failed for %s", controller_id)
 
     async def _recompute_controller(
         self, controller_id: str, view: ControllerView, now: float
@@ -128,8 +160,7 @@ class ScenarioEngine:
         if self._or_present(controller_id, now):
             state.off_deadline = None
             if not state.desired_on:
-                driver = self._get_driver(controller_id)
-                await driver.turn_on()
-                state.desired_on = True
-        elif state.off_deadline is None:
-            state.off_deadline = now + state.off_delay_sec
+                await self._apply_driver_on(controller_id, state)
+        elif self._presence_tracked(controller_id):
+            if state.off_deadline is None:
+                state.off_deadline = now + state.off_delay_sec

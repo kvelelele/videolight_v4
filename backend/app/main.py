@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
@@ -11,6 +12,8 @@ from app.lighting.engine import ControllerView, ScenarioEngine
 from app.models import CameraControllerLink, LightingController
 from app.routers import auth, cameras, lighting
 from app.seed import seed_if_empty
+
+logger = logging.getLogger(__name__)
 
 
 def get_controllers_for_camera(camera_id: str) -> list[ControllerView]:
@@ -63,7 +66,7 @@ async def _lighting_tick_loop(lighting_engine: ScenarioEngine) -> None:
         try:
             await lighting_engine.tick()
         except Exception:
-            continue
+            logger.exception("lighting tick failed")
 
 
 @asynccontextmanager

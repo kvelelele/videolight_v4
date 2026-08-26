@@ -142,6 +142,11 @@ def update_controller(
     if camera_ids is not None:
         _set_camera_ids(db, controller, camera_ids)
     db.commit()
+    engine.ensure_controller_config(
+        controller.id,
+        enabled=controller.enabled,
+        off_delay_sec=controller.off_delay_sec,
+    )
     return _to_out(_get_controller_or_404(db, controller_id), engine)
 
 
@@ -150,10 +155,12 @@ def delete_controller(
     controller_id: str,
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
+    engine: ScenarioEngine = Depends(get_lighting_engine),
 ) -> None:
     controller = _get_controller_or_404(db, controller_id)
     db.delete(controller)
     db.commit()
+    engine.forget_controller(controller_id)
 
 
 @router.put("/controllers/{controller_id}/cameras", response_model=LightingControllerOut)
@@ -193,6 +200,11 @@ async def command_controller(
     engine: ScenarioEngine = Depends(get_lighting_engine),
 ) -> LightingControllerOut:
     controller = _get_controller_or_404(db, controller_id)
+    engine.ensure_controller_config(
+        controller_id,
+        enabled=controller.enabled,
+        off_delay_sec=controller.off_delay_sec,
+    )
     result = await engine.set_manual(controller_id, on=body.action == "on")
     controller.status = result.status
     controller.last_error = None if result.ok else (result.message or None)

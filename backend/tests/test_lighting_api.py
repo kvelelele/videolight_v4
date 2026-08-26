@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -236,6 +239,65 @@ def test_command_sets_light_on(client, fake_driver):
     assert commanded.json()["lightOn"] is True
     assert fake_driver.commands == ["on"]
     assert "password" not in commanded.json()
+
+
+def test_command_on_survives_tick_until_manual_off(client, fake_driver):
+    token = _admin_token(client)
+    created = client.post(
+        "/api/lighting/controllers",
+        headers=_auth(token),
+        json=_controller_payload(),
+    )
+    controller_id = created.json()["id"]
+
+    commanded = client.post(
+        f"/api/lighting/controllers/{controller_id}/command",
+        headers=_auth(token),
+        json={"action": "on"},
+    )
+    assert commanded.status_code == 200
+    assert commanded.json()["lightOn"] is True
+
+    asyncio.run(app.state.lighting_engine.tick(now=time.time() + 1))
+
+    fetched = client.get(f"/api/lighting/controllers/{controller_id}", headers=_auth(token))
+    assert fetched.status_code == 200
+    assert fetched.json()["lightOn"] is True
+    assert fake_driver.commands == ["on"]
+
+    off = client.post(
+        f"/api/lighting/controllers/{controller_id}/command",
+        headers=_auth(token),
+        json={"action": "off"},
+    )
+    assert off.status_code == 200
+    assert off.json()["lightOn"] is False
+    assert fake_driver.commands == ["on", "off"]
+
+
+def test_delete_forgets_engine_state(client, fake_driver):
+    token = _admin_token(client)
+    created = client.post(
+        "/api/lighting/controllers",
+        headers=_auth(token),
+        json=_controller_payload(),
+    )
+    controller_id = created.json()["id"]
+
+    commanded = client.post(
+        f"/api/lighting/controllers/{controller_id}/command",
+        headers=_auth(token),
+        json={"action": "on"},
+    )
+    assert commanded.status_code == 200
+    engine = app.state.lighting_engine
+    assert engine.light_on(controller_id) is True
+
+    deleted = client.delete(f"/api/lighting/controllers/{controller_id}", headers=_auth(token))
+    assert deleted.status_code == 204
+    assert engine.light_on(controller_id) is False
+    asyncio.run(engine.tick(now=time.time() + 1))
+    assert fake_driver.commands == ["on"]
 
 
 def test_presence_accepted_for_authenticated_user(client, fake_driver):
