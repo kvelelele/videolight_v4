@@ -3,9 +3,11 @@ import { useCameras } from '../lib/cameras';
 import { getStatusBg, getStatusLabel, type Camera } from '../lib/mockData';
 import { ApiError } from '../lib/api';
 import CameraModal from './CameraModal';
+import LightingSettingsPanel from './LightingSettingsPanel';
 
 export default function SettingsPage() {
   const { cameras, loading, error, addCamera, updateCamera, deleteCamera: removeCamera } = useCameras();
+  const [tab, setTab] = useState<'cameras' | 'lighting'>('cameras');
   const [editCamera, setEditCamera] = useState<Camera | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Camera | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -28,21 +30,47 @@ export default function SettingsPage() {
       <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Настройки</h2>
-          <p className="text-sm text-gray-500">Управление камерами и подключениями</p>
+          <p className="text-sm text-gray-500">Управление камерами и освещением</p>
+          <div className="mt-3 inline-flex rounded-lg border border-gray-200 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setTab('cameras')}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                tab === 'cameras' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              Камеры
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('lighting')}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                tab === 'lighting' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              Освещение
+            </button>
+          </div>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          Добавить камеру
-        </button>
+        {tab === 'cameras' && (
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Добавить камеру
+          </button>
+        )}
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
+        {tab === 'lighting' ? (
+          <LightingSettingsPanel />
+        ) : (
+          <>
         {(error || actionError) && (
           <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
             {actionError || error}
@@ -117,6 +145,8 @@ export default function SettingsPage() {
             </tbody>
           </table>
         </div>
+          </>
+        )}
       </div>
 
       {/* Add/Edit Modal */}
