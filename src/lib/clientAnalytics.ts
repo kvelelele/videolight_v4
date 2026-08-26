@@ -57,9 +57,9 @@ export function useClientAnalytics(
     inflightRef.current = false;
     lastSentRef.current = 0;
 
-    const worker = new Worker(new URL('../workers/analyticsWorker.ts', import.meta.url), {
-      type: 'module',
-    });
+    // Classic worker (not Vite ESM): MediaPipe WASM fails with
+    // "ModuleFactory not set" inside bundled module workers.
+    const worker = new Worker(`${import.meta.env.BASE_URL}analyticsWorker.js`);
     workerRef.current = worker;
 
     worker.onmessage = (event: MessageEvent) => {
@@ -93,10 +93,10 @@ export function useClientAnalytics(
       }
     };
 
-    worker.onerror = () => {
+    worker.onerror = (event) => {
       if (workerRef.current !== worker) return;
       workerReadyRef.current = false;
-      setError('Аналитика недоступна');
+      setError(event.message || 'Аналитика недоступна');
       setLoading(false);
       setReady(false);
       inflightRef.current = false;
