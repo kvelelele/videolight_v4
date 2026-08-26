@@ -323,6 +323,43 @@ def test_presence_accepted_for_authenticated_user(client, fake_driver):
     assert fake_driver.commands == ["on"]
 
 
+def test_presence_without_or_bogus_ts_uses_server_time_for_grace(client, fake_driver):
+    admin = _admin_token(client)
+    camera_id = _create_camera(client, admin)
+    created = client.post(
+        "/api/lighting/controllers",
+        headers=_auth(admin),
+        json=_controller_payload(cameraIds=[camera_id], offDelaySec=1),
+    )
+    controller_id = created.json()["id"]
+    engine = app.state.lighting_engine
+
+    user = _user_token(client)
+    posted = client.post(
+        "/api/lighting/presence",
+        headers=_auth(user),
+        json={"cameraId": camera_id, "present": True, "ts": 0.016},
+    )
+    assert posted.status_code == 204
+    assert engine.light_on(controller_id) is True
+
+    t0 = time.time()
+    asyncio.run(engine.tick(now=t0))
+    asyncio.run(engine.tick(now=t0 + 1))
+    assert engine.light_on(controller_id) is True
+    assert fake_driver.commands == ["on"]
+
+    posted_no_ts = client.post(
+        "/api/lighting/presence",
+        headers=_auth(user),
+        json={"cameraId": camera_id, "present": True},
+    )
+    assert posted_no_ts.status_code == 204
+    asyncio.run(engine.tick(now=time.time()))
+    assert engine.light_on(controller_id) is True
+    assert fake_driver.commands == ["on"]
+
+
 def test_health_still_ok(client):
     response = client.get("/api/health")
     assert response.status_code == 200

@@ -56,7 +56,6 @@ export function usePresenceReporter(
       cameraId,
       present,
       classes: present ? classes : undefined,
-      ts: frame.ts,
     });
   }, [cameraId, frame, enabled]);
 }

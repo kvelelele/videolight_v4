@@ -60,22 +60,18 @@ class ScenarioEngine:
 
     async def set_manual(self, controller_id: str, on: bool) -> DriverResult:
         driver = self._get_driver(controller_id)
-        if on:
-            result = await driver.turn_on()
-            self._ensure_controller_state(controller_id)
-            self._controllers[controller_id].desired_on = True
-            self._controllers[controller_id].off_deadline = None
-        else:
-            result = await driver.turn_off()
-            self._ensure_controller_state(controller_id)
-            self._controllers[controller_id].desired_on = False
-            self._controllers[controller_id].off_deadline = None
+        result = await (driver.turn_on() if on else driver.turn_off())
+        if result.ok:
+            state = self._ensure_controller_state(controller_id)
+            state.desired_on = on
+            state.off_deadline = None
         return result
 
     async def ingest_presence(
         self, camera_id: str, present: bool, *, now: float | None = None
     ) -> None:
-        now = time.time() if now is None else now
+        # Client ts is ignored: rAF/monotonic clocks must not drive heartbeat grace.
+        now = time.time()
         self._cameras[camera_id] = _CameraState(present=present, last_seen=now)
 
         for view in self._get_controllers_for_camera(camera_id):
@@ -105,9 +101,10 @@ class ScenarioEngine:
             ):
                 try:
                     driver = self._get_driver(controller_id)
-                    await driver.turn_off()
-                    state.desired_on = False
-                    state.off_deadline = None
+                    result = await driver.turn_off()
+                    if result.ok:
+                        state.desired_on = False
+                        state.off_deadline = None
                 except Exception:
                     logger.exception("lighting driver off failed for %s", controller_id)
 
@@ -124,10 +121,11 @@ class ScenarioEngine:
         )
 
     def _presence_tracked(self, controller_id: str) -> bool:
-        return any(
-            camera_id in self._cameras
-            for camera_id in self._get_camera_ids_for_controller(controller_id)
-        )
+        camera_ids = self._get_camera_ids_for_controller(controller_id)
+        if not camera_ids:
+            # No linked cameras: treat as known-absent so an on light can time out.
+            return True
+        return any(camera_id in self._cameras for camera_id in camera_ids)
 
     def _ensure_controller_state(self, controller_id: str) -> _ControllerState:
         if controller_id not in self._controllers:
@@ -142,8 +140,9 @@ class ScenarioEngine:
     async def _apply_driver_on(self, controller_id: str, state: _ControllerState) -> None:
         try:
             driver = self._get_driver(controller_id)
-            await driver.turn_on()
-            state.desired_on = True
+            result = await driver.turn_on()
+            if result.ok:
+                state.desired_on = True
         except Exception:
             logger.exception("lighting driver on failed for %s", controller_id)
 

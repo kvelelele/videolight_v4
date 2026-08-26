@@ -218,4 +218,4 @@ async def ingest_presence(
     _: User = Depends(get_current_user),
     engine: ScenarioEngine = Depends(get_lighting_engine),
 ) -> None:
-    await engine.ingest_presence(body.cameraId, body.present, now=body.ts)
+    await engine.ingest_presence(body.cameraId, body.present)

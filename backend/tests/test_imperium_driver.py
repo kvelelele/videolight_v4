@@ -58,3 +58,22 @@ async def test_imperium_test_fails_when_body_not_one():
         result = await driver.test()
         assert result.ok is False
         assert result.status == "offline"
+
+
+@pytest.mark.asyncio
+async def test_imperium_retries_http_errors_then_succeeds():
+    attempts = {"n": 0}
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise httpx.ConnectError("transient")
+        return _handler(request)
+
+    transport = httpx.MockTransport(flaky)
+    async with httpx.AsyncClient(transport=transport, base_url="http://192.168.1.10:90") as client:
+        driver = ImperiumDriver("192.168.1.10", 90, "TRION", "TRION1", client=client)
+        assert (await driver.test()).ok is True
+        assert attempts["n"] == 3
+        assert (await driver.turn_on()).ok is True
+        assert (await driver.turn_off()).ok is True

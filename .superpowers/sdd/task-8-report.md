@@ -3,7 +3,7 @@
 **Status:** DONE  
 **Date:** 2026-08-26  
 **Branch:** ui-tracking  
-**Commit:** `502db9c chore(lighting): finalize presence lighting MVP`
+**Commit:** `7b5cbda chore(lighting): finalize presence lighting MVP`
 
 ## Summary
 
@@ -94,3 +94,108 @@ Design spec `docs/superpowers/specs/2026-08-26-lighting-control-design.md` → *
 - Unmount/disable `present: false` is best-effort (network errors swallowed).
 - Live “Свет: присутствие” chip intentionally skipped (YAGNI).
 - Spectrum driver is stub only; UI shows type but Spectrum option may be disabled.
+
+---
+
+## Final lighting branch review fixes (2026-08-26)
+
+**Commit:** `fix(lighting): presence clock, failed-command state, empty-links off, Imperium retries`  
+**Status:** DONE
+
+### P1 Presence clock
+
+Client rAF/monotonic `frame.ts` was posted as presence `ts` and forwarded into `ScenarioEngine.ingest_presence`, so heartbeat grace compared Unix `tick()` time against a ~16ms clock.
+
+- `ingest_presence` always uses `time.time()` and ignores the `now=` argument (client ts).
+- Router no longer passes `body.ts`.
+- `presenceReporter.ts` no longer sends `ts`.
+- Tests: engine + API presence with `ts=0.016` / omitted `ts` still treat last_seen as server time (grace holds).
+
+### P1 Failed driver must not flip `desired_on`
+
+`set_manual`, `_apply_driver_on`, and tick `turn_off` only update `desired_on` / clear `off_deadline` when `DriverResult.ok` is True.
+
+- Failed `turn_on` leaves `desired_on` False so presence/manual retries can fire.
+- Failed `turn_off` leaves `desired_on` True and keeps `off_deadline` so tick retries.
+- Tests use `FakeDriver(on_ok=False)` / `off_ok=False`.
+
+### P2 Empty camera links after presence
+
+Empty `get_camera_ids_for_controller` is treated as known-absent (`_presence_tracked` True) so an on light starts/continues `off_deadline` with `off_delay_sec` (unlinked or all links removed).
+
+### P2 Imperium retries
+
+`test` / `turn_on` / `turn_off` share `_get_response`: 1 try + 2 retries, backoff 0.05s then 0.15s, on HTTP errors and non-200. HTTP 200 with body `"0"` is not retried. MockTransport tests stay green; new flaky-ConnectError test covers recover-on-third-attempt.
+
+### Test output
+
+#### Backend (`cd backend; .venv/Scripts/pytest -v`)
+
+```
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- C:\DevPrj\videolight_v4\backend\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\DevPrj\videolight_v4\backend
+configfile: pytest.ini
+testpaths: tests
+plugins: anyio-4.14.2, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 32 items
+
+tests/test_driver_factory.py::test_build_driver_returns_spectrum_for_spectrum_type PASSED [  3%]
+tests/test_driver_factory.py::test_build_driver_returns_imperium_with_controller_credentials PASSED [  6%]
+tests/test_driver_factory.py::test_build_driver_returns_imperium_for_non_spectrum_types PASSED [  9%]
+tests/test_imperium_driver.py::test_imperium_test_on_off PASSED          [ 12%]
+tests/test_imperium_driver.py::test_imperium_standalone_path_without_injected_client PASSED [ 15%]
+tests/test_imperium_driver.py::test_imperium_test_fails_when_body_not_one PASSED [ 18%]
+tests/test_imperium_driver.py::test_imperium_retries_http_errors_then_succeeds PASSED [ 21%]
+tests/test_lighting_api.py::test_list_controllers_requires_auth PASSED   [ 25%]
+tests/test_lighting_api.py::test_list_controllers_requires_admin PASSED  [ 28%]
+tests/test_lighting_api.py::test_create_get_patch_delete_controller_hides_password PASSED [ 31%]
+tests/test_lighting_api.py::test_put_cameras_replaces_links_and_rejects_unknown PASSED [ 34%]
+tests/test_lighting_api.py::test_test_endpoint_persists_status PASSED    [ 37%]
+tests/test_lighting_api.py::test_command_sets_light_on PASSED            [ 40%]
+tests/test_lighting_api.py::test_command_on_survives_tick_until_manual_off PASSED [ 43%]
+tests/test_lighting_api.py::test_delete_forgets_engine_state PASSED      [ 46%]
+tests/test_lighting_api.py::test_presence_accepted_for_authenticated_user PASSED [ 50%]
+tests/test_lighting_api.py::test_presence_without_or_bogus_ts_uses_server_time_for_grace PASSED [ 53%]
+tests/test_lighting_api.py::test_health_still_ok PASSED                  [ 56%]
+tests/test_scenario_engine.py::test_or_presence_and_off_delay PASSED     [ 59%]
+tests/test_scenario_engine.py::test_second_camera_keeps_light_on PASSED  [ 62%]
+tests/test_scenario_engine.py::test_stale_heartbeat_counts_absent PASSED [ 65%]
+tests/test_scenario_engine.py::test_presence_without_or_bogus_ts_uses_server_time_for_grace PASSED [ 68%]
+tests/test_scenario_engine.py::test_manual_on_survives_tick_without_presence PASSED [ 71%]
+tests/test_scenario_engine.py::test_manual_on_then_presence_absence_starts_off_delay PASSED [ 75%]
+tests/test_scenario_engine.py::test_forget_controller_drops_state_so_tick_does_not_turn_off PASSED [ 78%]
+tests/test_scenario_engine.py::test_tick_skips_get_driver_failure_and_continues PASSED [ 81%]
+tests/test_scenario_engine.py::test_failed_turn_on_does_not_set_desired_on_and_retries PASSED [ 84%]
+tests/test_scenario_engine.py::test_failed_manual_on_does_not_set_desired_on PASSED [ 87%]
+tests/test_scenario_engine.py::test_failed_manual_off_keeps_desired_on PASSED [ 90%]
+tests/test_scenario_engine.py::test_failed_tick_turn_off_keeps_desired_on PASSED [ 93%]
+tests/test_scenario_engine.py::test_empty_camera_links_starts_off_delay_when_light_on PASSED [ 96%]
+tests/test_scenario_engine.py::test_manual_on_with_no_links_eventually_offs PASSED [100%]
+
+============================== warnings summary ===============================
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  C:\DevPrj\videolight_v4\backend\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 32 passed, 1 warning in 8.12s ========================
+```
+
+#### Frontend (`npm test`)
+
+```
+> test
+> vitest run
+
+ RUN  v4.1.11 C:/DevPrj/videolight_v4
+
+ Test Files  3 passed (3)
+      Tests  13 passed (13)
+   Start at  21:18:10
+   Duration  323ms
+```
+
+**Counts:** backend 32/32 passed; frontend 13/13 passed.
