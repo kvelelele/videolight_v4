@@ -62,7 +62,6 @@ export default function LightingSettingsPanel() {
       setControllers(list);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось загрузить контроллеры');
-      setControllers([]);
     } finally {
       setLoading(false);
     }
