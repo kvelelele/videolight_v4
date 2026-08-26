@@ -1,63 +1,98 @@
-# Task 2 Report: Slim `detections.ts` (remove WebSocket hook)
+# Task 2 Report: ImperiumDriver + factory (TDD)
 
-**Branch:** `ui-tracking`  
-**Date:** 2026-08-26  
-**Status:** Complete
+## Status: DONE
 
 ## Summary
 
-Removed the WebSocket detection client from `src/lib/detections.ts`, leaving shared types and overlay helpers. Added a temporary `useDetections` stub so `CameraStreamPlayer` continues to compile without changes until Task 4 wires in client-side analytics.
+Implemented HTTP lighting drivers (Imperium real, Spectrum stub) and factory with pytest TDD. All brief-specified files created; 2/2 tests pass.
 
-## Changes
+## Files Created/Modified
 
-### `src/lib/detections.ts`
+| File | Action |
+|------|--------|
+| `backend/app/lighting/__init__.py` | Created (empty) |
+| `backend/app/lighting/drivers/__init__.py` | Created (empty) |
+| `backend/app/lighting/drivers/base.py` | Created — `DriverResult`, `LightingDriver` Protocol |
+| `backend/app/lighting/drivers/imperium.py` | Created — `ImperiumDriver` with Basic auth + DALI API |
+| `backend/app/lighting/drivers/spectrum.py` | Created — stub returning `ok=False`, `status="error"` |
+| `backend/app/lighting/drivers/factory.py` | Created — `build_driver(controller)` |
+| `backend/tests/conftest.py` | Created (empty) |
+| `backend/tests/test_imperium_driver.py` | Created — verbatim from brief |
+| `backend/requirements.txt` | Modified — added pytest, pytest-asyncio |
+| `backend/pytest.ini` | Created — asyncio_mode=auto, pythonpath=. |
 
-**Removed:**
-- React imports (`useEffect`, `useRef`, `useState`)
-- `./api` import (`getToken`)
-- `getDetectionsWebSocketUrl()`
-- Full `useDetections` WebSocket hook (~115 lines): connection, retry/backoff, message parsing, cleanup
+## TDD Evidence
 
-**Retained (unchanged shapes):**
-- `DetectionTrack`, `DetectionFrame` interfaces
-- `getContentRect()` overlay layout helper
-- `CLASS_COLORS`, `CLASS_LABELS` constants
+### RED — Step 3 (expect fail: module not found)
 
-**Added (temporary):**
-```ts
-// TEMP: removed in Task 4
-export function useDetections(_cameraId: string, _enabled: boolean) {
-  return { frame: null, connected: false, error: null };
-}
+```bash
+cd backend
+.venv/Scripts/pip install pytest pytest-asyncio
+.venv/Scripts/pytest tests/test_imperium_driver.py -v
 ```
 
-### Not modified (per binding resolution)
+```
+ERROR collecting tests/test_imperium_driver.py
+ImportError while importing test module ...
+    from app.lighting.drivers.imperium import ImperiumDriver
+E   ModuleNotFoundError: No module named 'app.lighting'
+=========================== short test summary info ===========================
+ERROR tests/test_imperium_driver.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+```
 
-- `src/components/CameraStreamPlayer.tsx` — still imports `useDetections` from `detections.ts`; compiles against stub
-- `src/components/DetectionOverlay.tsx` — unchanged; continues to consume types/helpers from `detections.ts`
+### GREEN — Step 5 (expect pass)
 
-## Verification
+```bash
+cd backend
+.venv/Scripts/pytest tests/test_imperium_driver.py -v
+```
 
-| Check | Result |
-|-------|--------|
-| `npm run build` | Pass |
-| `npm run test` | Pass (4/4) |
-| Linter (`detections.ts`) | No issues |
+```
+tests/test_imperium_driver.py::test_imperium_test_on_off PASSED          [ 50%]
+tests/test_imperium_driver.py::test_imperium_test_fails_when_body_not_one PASSED [100%]
+
+============================== 2 passed in 0.11s ==============================
+```
 
 ## Commit
 
 ```
-refactor: remove WebSocket detection client from detections.ts
+bd6d683 feat(lighting): add Imperium driver and factory
 ```
 
-Only `src/lib/detections.ts` staged and committed. Not pushed.
+## Self-Review
 
-## Impact / follow-up
-
-- **Runtime:** Analytics overlay will show no detections until Task 3–4 land (`frame` is always `null`, `connected` always `false`).
-- **Task 4:** Remove the TEMP stub; point `CameraStreamPlayer` at the new client analytics hook (or re-export from `detections.ts` if desired).
-- **No regressions** in build or existing vitest suite; no detection-specific tests existed for the removed WebSocket code.
+- Tests match brief verbatim; mock transport validates Basic auth and DALI params.
+- `ImperiumDriver` handles injected client (relative paths) vs standalone (full URL via `_get`).
+- `SpectrumDriver` stub and `build_driver` factory implemented per spec.
+- No ScenarioEngine or API changes (out of scope).
 
 ## Concerns
 
-None blocking. Stub intentionally disables server-side detection streaming; expected until Tasks 3–4.
+None.
+
+## Review Fix (factory + standalone coverage)
+
+### Changes
+
+- Added `backend/tests/test_driver_factory.py` — `build_driver` returns `SpectrumDriver` for `type="spectrum"`, `ImperiumDriver` for `imperium` and other types with host/port/username/password passed through (via `SimpleNamespace` fake controller).
+- Added `test_imperium_standalone_path_without_injected_client` in `test_imperium_driver.py` — exercises `client=None` standalone path by monkeypatching `httpx.AsyncClient` to inject `MockTransport` (avoids recursion by calling saved original constructor).
+
+### Verification
+
+```bash
+cd backend
+.venv/Scripts/pytest tests/test_imperium_driver.py tests/test_driver_factory.py -v
+```
+
+```
+tests/test_imperium_driver.py::test_imperium_test_on_off PASSED          [ 16%]
+tests/test_imperium_driver.py::test_imperium_standalone_path_without_injected_client PASSED [ 33%]
+tests/test_imperium_driver.py::test_imperium_test_fails_when_body_not_one PASSED [ 50%]
+tests/test_driver_factory.py::test_build_driver_returns_spectrum_for_spectrum_type PASSED [ 66%]
+tests/test_driver_factory.py::test_build_driver_returns_imperium_with_controller_credentials PASSED [ 83%]
+tests/test_driver_factory.py::test_build_driver_returns_imperium_for_non_spectrum_types PASSED [100%]
+
+============================== 6 passed in 0.22s ==============================
+```
