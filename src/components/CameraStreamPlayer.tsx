@@ -9,6 +9,7 @@ import {
   isVideoFileUrl,
   shouldUseDirectStream,
 } from '../lib/streams';
+import { usePresenceReporter } from '../lib/presenceReporter';
 import AnalyticsErrorBoundary from './AnalyticsErrorBoundary';
 import DetectionOverlay from './DetectionOverlay';
 
@@ -74,6 +75,7 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
     analyticsEnabled,
     handleAnalyticsCaptureError,
   );
+  usePresenceReporter(camera.id, detectionFrame, analyticsEnabled);
   // HLS must use backend proxy so Referer/UA are applied server-side.
   const hlsSourceUrl = isHls ? proxiedUrl : directUrl;
 
