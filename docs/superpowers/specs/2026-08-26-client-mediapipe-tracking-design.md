@@ -21,25 +21,30 @@ Priorities: stable FPS, smooth overlay, reliable track IDs. Prefer MediaPipe Obj
 
 ```
 CameraStreamPlayer
-  ├─ video/img (unchanged)
-  ├─ useClientAnalytics(mediaRef, enabled)
+  ├─ video/img (unchanged; prefer same-origin / proxy URL for grab)
+  ├─ useClientAnalytics(mediaRef, cameraId, enabled)
   │     ├─ main thread: frame grab (rAF, throttle ~10–15 FPS)
-  │     ├─ worker: MediaPipe ObjectDetector → raw boxes
+  │     ├─ worker: MediaPipe ObjectDetector (VIDEO mode) → raw boxes
   │     ├─ worker: SORT-like tracker → trackId + smoothed bbox
-  │     └─ returns DetectionFrame { ts, frameWidth, frameHeight, tracks }
-  └─ DetectionOverlay (same contract)
+  │     └─ returns { frame, ready, loading, error }
+  └─ DetectionOverlay (same DetectionFrame contract)
 ```
 
 - Start analytics after stream reaches `playing` plus a short delay (same UX as today).
 - Drop intermediate frames while inference is in flight (latest-only).
-- Load MediaPipe model once; reuse across cameras in the session when practical; reset tracker state on camera change.
+- Load MediaPipe model once per worker lifetime; reset **tracker** state when `cameraId` changes (keep detector warm).
+- For frame grab reliability, prefer the same-origin proxied stream already used for HLS/proxy playback. Direct cross-origin URLs without CORS may taint the media element and block `createImageBitmap` — treat as analytics error, do not crash the player.
 
 ## Data flow
 
-1. **Grab (main):** When enabled and media is drawable, paint into a canvas (or equivalent), `createImageBitmap`, `postMessage` to worker with transferable ownership.
-2. **Detect (worker):** `@mediapipe/tasks-vision` `ObjectDetector.detect(image)`.
-   - Confidence threshold ≈ 0.35
-   - Keep COCO-like classes used today: `person`; map `car` / `bus` / `truck` → `car`
+1. **Grab (main):** When enabled and media is drawable, create an `ImageBitmap` from the video/img (directly when possible, else via canvas). `postMessage` to the worker with transferable ownership. Close/drop bitmaps that are superseded.
+2. **Detect (worker):** `@mediapipe/tasks-vision` `ObjectDetector` with:
+   - `runningMode: 'VIDEO'`
+   - `detectForVideo(bitmap, timestampMs)` (not IMAGE `detect()`)
+   - `scoreThreshold` ≈ 0.35
+   - Optional `categoryAllowlist` for person/car/bus/truck when supported; otherwise filter in JS
+   - Map classes: `person` → `person`; `car` / `bus` / `truck` → `car`
+   - Convert MediaPipe `boundingBox { originX, originY, width, height }` → `[x1, y1, x2, y2]` in input-image pixels
 3. **Track (worker):** SORT-like tracker
    - Kalman filter on center + size
    - Association by IoU with greedy matching (sufficient at low object counts)
@@ -64,21 +69,30 @@ interface DetectionFrame {
 }
 ```
 
-5. **Draw:** Existing `DetectionOverlay` + `CLASS_COLORS` / `CLASS_LABELS` unchanged.
+5. **Hook → UI:** Replace `useDetections`’s `{ frame, connected, error }` with:
+   - `frame` — latest `DetectionFrame | null`
+   - `loading` — model/worker still initializing
+   - `ready` — detector ready (replaces `connected` for the status badge)
+   - `error` — string | null  
+   Badge copy stays: error → «Аналитика недоступна»; else → `Детекция · N` when `ready`.
+
+6. **Draw:** Existing `DetectionOverlay` + `CLASS_COLORS` / `CLASS_LABELS` unchanged.
 
 ## Client modules
 
 | Module | Role |
 |--------|------|
-| `src/lib/clientAnalytics.ts` | Hook replacing `useDetections`; owns worker lifecycle, enabled flag, frame/error state |
-| `src/workers/analyticsWorker.ts` | MediaPipe init, detect, track, reply with `DetectionFrame` |
-| `src/lib/tracker.ts` (in worker bundle or shared) | SORT-like tracker pure logic |
-| `src/components/CameraStreamPlayer.tsx` | Wire `useClientAnalytics` instead of WebSocket hook |
+| `src/lib/clientAnalytics.ts` | Hook replacing `useDetections`; owns worker lifecycle, `cameraId` reset, enabled flag, `{ frame, ready, loading, error }` |
+| `src/workers/analyticsWorker.ts` | MediaPipe init, `detectForVideo`, track, reply with `DetectionFrame` |
+| `src/lib/tracker.ts` | SORT-like tracker pure logic (imported into worker) |
+| `src/components/CameraStreamPlayer.tsx` | Wire `useClientAnalytics`; map `ready` where `connected` was used |
 | `src/lib/detections.ts` | Keep types + overlay helpers; remove WebSocket URL / `useDetections` |
 
-Model assets: load EfficientDet-Lite2 (MediaPipe Object Detector) from the official Google Storage CDN used by Tasks Vision docs. No local vendoring in v1.
+**Model:** EfficientDet-**Lite0** (official MediaPipe default for browser balance). Load from Google Storage / jsDelivr WASM paths used in Tasks Vision docs. Lite2 is out of scope for v1 (heavier).
 
-Dependencies to add: `@mediapipe/tasks-vision`. Use Vite’s native `new Worker(new URL(...), { type: 'module' })` for the analytics worker.
+**Worker packaging:** Prefer Vite `new Worker(new URL('../workers/analyticsWorker.ts', import.meta.url), { type: 'module' })` with a recent `@mediapipe/tasks-vision` (follow [mediapipe-samples-web](https://github.com/google-ai-edge/mediapipe-samples-web) object-detector worker pattern). If ESM + MediaPipe fails in practice, fall back to a classic worker that loads `vision_bundle.js` via `importScripts` — do not block the feature on ESM purity.
+
+Dependencies to add: `@mediapipe/tasks-vision`.
 
 ## Backend removals (this branch only)
 
@@ -96,20 +110,21 @@ Streaming, auth, cameras, and proxy remain unchanged.
 
 | Situation | Behavior |
 |-----------|----------|
-| Model still loading | Loading status; empty overlay |
-| MediaPipe / worker failure | Hook `error`; UI message like current «аналитика недоступна»; player keeps working |
-| Tainted canvas / grab failure | Surface error; do not crash player (`AnalyticsErrorBoundary`) |
-| Stream paused / not playing | Stop grab; reset tracker on camera change |
+| Model still loading | `loading=true`; empty overlay; no false “unavailable” badge |
+| MediaPipe / worker failure | `error` set; «Аналитика недоступна»; player keeps working |
+| Tainted canvas / CORS grab failure (often direct external URL) | `error` set; do not crash player (`AnalyticsErrorBoundary`) |
+| Stream paused / not playing | Stop grab; on `cameraId` change reset tracker (message to worker) |
 | No objects | Empty `tracks[]`, no error |
-| Unsupported / no drawable media | Analytics disabled |
+| Unsupported / no drawable media | Analytics disabled (`enabled=false`) |
 
 ## Testing (manual)
 
-1. HLS/proxy camera: person/car boxes appear, IDs stable while objects move
+1. Same-origin / proxy camera: person/car boxes appear, IDs stable while objects move
 2. UI stays responsive during inference (no freezes)
-3. Switch cameras: tracks reset, no stale boxes
+3. Switch cameras: tracks reset, no stale boxes; model does not fully reload if worker stays alive
 4. Backend starts without ML packages
 5. Overlay still letterboxes correctly with `object-contain`
+6. (Optional) Direct cross-origin stream: analytics fails gracefully without blanking video
 
 ## Success criteria
 
@@ -117,3 +132,4 @@ Streaming, auth, cameras, and proxy remain unchanged.
 - Client detection + tracking drives the existing overlay
 - Smooth realtime feel on a typical desktop browser
 - Track IDs persist across brief detection gaps
+- VIDEO-mode MediaPipe path (`detectForVideo`) is used for the live player
