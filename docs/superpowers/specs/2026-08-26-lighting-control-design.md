@@ -1,7 +1,7 @@
 # Lighting control — presence-based automation
 
 **Date:** 2026-08-26  
-**Status:** Approved  
+**Status:** Implemented  
 **Related:** client MediaPipe tracking (`2026-08-26-client-mediapipe-tracking-design.md`)
 
 ## Goal
