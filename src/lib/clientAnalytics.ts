@@ -22,20 +22,11 @@ export function useClientAnalytics(
   const workerRef = useRef<Worker | null>(null);
   const inflightRef = useRef(false);
   const lastSentRef = useRef(0);
+  const generationRef = useRef(0);
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   useEffect(() => {
-    if (!enabled) {
-      setFrame(null);
-      setReady(false);
-      setLoading(false);
-      setError(null);
-      inflightRef.current = false;
-      lastSentRef.current = 0;
-      workerRef.current?.terminate();
-      workerRef.current = null;
-      return;
-    }
-
     setLoading(true);
     setReady(false);
     setError(null);
@@ -53,8 +44,8 @@ export function useClientAnalytics(
       if (cancelled) return;
       const data = event.data as
         | { type: 'ready' }
-        | { type: 'result'; frame: DetectionFrame }
-        | { type: 'error'; message: string };
+        | { type: 'result'; frame: DetectionFrame; generation: number }
+        | { type: 'error'; message: string; generation?: number };
 
       if (data.type === 'ready') {
         setReady(true);
@@ -63,15 +54,18 @@ export function useClientAnalytics(
         return;
       }
       if (data.type === 'error') {
+        if (data.generation !== undefined && data.generation !== generationRef.current) return;
         setError(data.message || 'Аналитика недоступна');
         setLoading(false);
         setReady(false);
         inflightRef.current = false;
+        setFrame(null);
         return;
       }
       if (data.type === 'result') {
+        if (data.generation !== generationRef.current) return;
         inflightRef.current = false;
-        setFrame(data.frame);
+        if (enabledRef.current) setFrame(data.frame);
       }
     };
 
@@ -81,6 +75,7 @@ export function useClientAnalytics(
       setLoading(false);
       setReady(false);
       inflightRef.current = false;
+      setFrame(null);
     };
 
     worker.postMessage({ type: 'init' });
@@ -91,15 +86,23 @@ export function useClientAnalytics(
       worker.terminate();
       if (workerRef.current === worker) workerRef.current = null;
     };
-  }, [enabled]);
+  }, []);
 
   useEffect(() => {
-    if (!enabled || !workerRef.current) return;
+    generationRef.current += 1;
     inflightRef.current = false;
     lastSentRef.current = 0;
-    workerRef.current.postMessage({ type: 'reset' });
+    workerRef.current?.postMessage({ type: 'reset' });
     setFrame(null);
-  }, [cameraId, enabled]);
+  }, [cameraId]);
+
+  useEffect(() => {
+    if (enabled) return;
+    generationRef.current += 1;
+    inflightRef.current = false;
+    lastSentRef.current = 0;
+    setFrame(null);
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -119,28 +122,38 @@ export function useClientAnalytics(
       const { width, height } = mediaSize(media);
       if (width <= 0 || height <= 0) return;
 
+      const generation = generationRef.current;
+      inflightRef.current = true;
       try {
         const bitmap = await createImageBitmap(media);
-        if (cancelled || inflightRef.current || workerRef.current !== worker) {
+        if (
+          cancelled ||
+          !enabledRef.current ||
+          generation !== generationRef.current ||
+          workerRef.current !== worker
+        ) {
           bitmap.close();
           return;
         }
-        inflightRef.current = true;
         lastSentRef.current = now;
         worker.postMessage(
-          { type: 'frame', bitmap, width, height, timestampMs: now },
+          { type: 'frame', bitmap, width, height, timestampMs: now, generation },
           [bitmap],
         );
       } catch (err) {
-        inflightRef.current = false;
-        setReady(false);
-        setError(err instanceof Error ? err.message : 'Не удалось захватить кадр');
+        if (generation === generationRef.current) {
+          inflightRef.current = false;
+          setFrame(null);
+          setReady(false);
+          setError(err instanceof Error ? err.message : 'Не удалось захватить кадр');
+        }
       }
     };
 
     raf = requestAnimationFrame(tick);
     return () => {
       cancelled = true;
+      inflightRef.current = false;
       cancelAnimationFrame(raf);
     };
   }, [enabled, ready, mediaRef]);

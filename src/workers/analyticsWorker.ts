@@ -13,12 +13,13 @@ type InMsg =
       width: number;
       height: number;
       timestampMs: number;
+      generation: number;
     };
 
 type OutMsg =
   | { type: 'ready' }
-  | { type: 'result'; frame: DetectionFrame }
-  | { type: 'error'; message: string };
+  | { type: 'result'; frame: DetectionFrame; generation: number }
+  | { type: 'error'; message: string; generation?: number };
 
 const CLASS_MAP: Record<string, string> = {
   person: 'person',
@@ -110,7 +111,7 @@ self.onmessage = async (event: MessageEvent<InMsg>): Promise<void> => {
     return;
   }
 
-  const { bitmap, width, height, timestampMs } = data;
+  const { bitmap, width, height, timestampMs, generation } = data;
   if (!detector || busy) {
     bitmap.close();
     return;
@@ -131,9 +132,9 @@ self.onmessage = async (event: MessageEvent<InMsg>): Promise<void> => {
         confidence: track.confidence,
       })),
     };
-    post({ type: 'result', frame });
+    post({ type: 'result', frame, generation });
   } catch (error) {
-    post({ type: 'error', message: errorMessage(error) });
+    post({ type: 'error', message: errorMessage(error), generation });
   } finally {
     bitmap.close();
     busy = false;
