@@ -55,4 +55,33 @@ describe('SortTracker', () => {
     );
     expect(b[0].trackId).not.toBe(a[0].trackId);
   });
+
+  it('emits last measured bbox while coasting, not runaway prediction', () => {
+    const tracker = new SortTracker({ minHits: 1, maxAgeMs: 750, iouThreshold: 0.3 });
+    tracker.update([{ className: 'person', confidence: 0.9, bbox: [100, 100, 140, 180] }], 0);
+    tracker.update([{ className: 'person', confidence: 0.9, bbox: [105, 100, 145, 180] }], 100);
+    const coast = tracker.update([], 200);
+    expect(coast).toHaveLength(1);
+    // Must freeze on last detection, not keep integrating velocity.
+    expect(coast[0].bbox).toEqual([105, 100, 145, 180]);
+  });
+
+  it('keeps stable id after a brief gap using measured velocity for association', () => {
+    const tracker = new SortTracker({ minHits: 1, maxAgeMs: 750, iouThreshold: 0.3 });
+    const t0 = tracker.update(
+      [{ className: 'person', confidence: 0.9, bbox: [100, 100, 140, 180] }],
+      0,
+    );
+    const id = t0[0].trackId;
+    tracker.update([{ className: 'person', confidence: 0.9, bbox: [120, 100, 160, 180] }], 100);
+    tracker.update([{ className: 'person', confidence: 0.9, bbox: [140, 100, 180, 180] }], 200);
+    tracker.update([], 300);
+    const again = tracker.update(
+      [{ className: 'person', confidence: 0.9, bbox: [160, 100, 200, 180] }],
+      400,
+    );
+    expect(again).toHaveLength(1);
+    expect(again[0].trackId).toBe(id);
+    expect(again[0].bbox).toEqual([160, 100, 200, 180]);
+  });
 });

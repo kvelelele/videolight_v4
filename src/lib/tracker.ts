@@ -23,11 +23,12 @@ interface InternalTrack {
   id: number;
   className: string;
   confidence: number;
+  /** Last matched detection bbox (never a coasting prediction). */
   bbox: TrackBBox;
   hits: number;
   ageMs: number;
   timeSinceUpdateMs: number;
-  // simple constant-velocity on center + size
+  // constant-velocity on center + size, estimated from successive measurements
   vx: number;
   vy: number;
   vw: number;
@@ -57,6 +58,23 @@ function fromCenterSize(cx: number, cy: number, w: number, h: number): TrackBBox
   return [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
 }
 
+function predictBBox(
+  bbox: TrackBBox,
+  vx: number,
+  vy: number,
+  vw: number,
+  vh: number,
+  dt: number,
+): TrackBBox {
+  const { cx, cy, w, h } = centerSize(bbox);
+  return fromCenterSize(
+    cx + vx * dt,
+    cy + vy * dt,
+    Math.max(1, w + vw * dt),
+    Math.max(1, h + vh * dt),
+  );
+}
+
 export class SortTracker {
   private iouThreshold: number;
   private maxAgeMs: number;
@@ -81,23 +99,20 @@ export class SortTracker {
     const dt = this.lastTs == null ? 0 : Math.max(0, nowMs - this.lastTs);
     this.lastTs = nowMs;
 
+    // Predict only for association; keep measured bbox for output/coasting display.
+    const predicted = this.tracks.map((tr) =>
+      predictBBox(tr.bbox, tr.vx, tr.vy, tr.vw, tr.vh, dt),
+    );
+
     for (const tr of this.tracks) {
-      const { cx, cy, w, h } = centerSize(tr.bbox);
-      const ncx = cx + tr.vx * dt;
-      const ncy = cy + tr.vy * dt;
-      const nw = Math.max(1, w + tr.vw * dt);
-      const nh = Math.max(1, h + tr.vh * dt);
-      tr.bbox = fromCenterSize(ncx, ncy, nw, nh);
       tr.ageMs += dt;
       tr.timeSinceUpdateMs += dt;
     }
 
-    const trackIdx = this.tracks.map((_, i) => i);
-    const detIdx = dets.map((_, i) => i);
     const pairs: { t: number; d: number; score: number }[] = [];
-    for (const t of trackIdx) {
-      for (const d of detIdx) {
-        const score = iou(this.tracks[t].bbox, dets[d].bbox);
+    for (let t = 0; t < this.tracks.length; t++) {
+      for (let d = 0; d < dets.length; d++) {
+        const score = iou(predicted[t], dets[d].bbox);
         if (score >= this.iouThreshold) pairs.push({ t, d, score });
       }
     }
@@ -111,6 +126,7 @@ export class SortTracker {
       usedD.add(p.d);
       const tr = this.tracks[p.t];
       const det = dets[p.d];
+      // Velocity from successive measurements (not residual to prediction).
       const prev = centerSize(tr.bbox);
       const next = centerSize(det.bbox);
       const invDt = dt > 0 ? 1 / dt : 0;
