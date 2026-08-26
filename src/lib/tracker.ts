@@ -71,6 +71,7 @@ export class SortTracker {
     this.minHits = opts.minHits ?? 2;
   }
 
+  /** Clears active tracks and timestamp state; track IDs remain monotonic (nextId is not reset). */
   reset(): void {
     this.tracks = [];
     this.lastTs = null;
@@ -117,7 +118,7 @@ export class SortTracker {
       tr.vy = (next.cy - prev.cy) * invDt;
       tr.vw = (next.w - prev.w) * invDt;
       tr.vh = (next.h - prev.h) * invDt;
-      tr.bbox = det.bbox;
+      tr.bbox = [...det.bbox] as TrackBBox;
       tr.className = det.className;
       tr.confidence = det.confidence;
       tr.hits += 1;
@@ -131,7 +132,7 @@ export class SortTracker {
         id: this.nextId++,
         className: det.className,
         confidence: det.confidence,
-        bbox: det.bbox,
+        bbox: [...det.bbox] as TrackBBox,
         hits: 1,
         ageMs: 0,
         timeSinceUpdateMs: 0,
