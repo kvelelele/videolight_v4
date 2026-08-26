@@ -84,3 +84,66 @@ class CameraTestRequest(BaseModel):
 class CameraTestResponse(BaseModel):
     success: bool
     message: str
+
+
+ControllerType = Literal["imperium", "spectrum"]
+ControllerStatus = Literal["unknown", "online", "offline", "error"]
+
+
+class LightingControllerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: str
+    name: str
+    type: ControllerType
+    host: str
+    port: int
+    username: str
+    passwordSet: bool = True
+    offDelaySec: int = Field(validation_alias="off_delay_sec", serialization_alias="offDelaySec")
+    enabled: bool
+    status: ControllerStatus
+    lastError: str | None = Field(default=None, validation_alias="last_error", serialization_alias="lastError")
+    cameraIds: list[str] = Field(default_factory=list, serialization_alias="cameraIds")
+    lightOn: bool = False
+
+
+class LightingControllerCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    type: ControllerType = "imperium"
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=90, ge=1, le=65535)
+    username: str = "TRION"
+    password: str = "TRION1"
+    offDelaySec: int = Field(default=60, ge=1, le=3600)
+    enabled: bool = True
+    cameraIds: list[str] = Field(default_factory=list)
+
+
+class LightingControllerUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    type: ControllerType | None = None
+    host: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    username: str | None = None
+    password: str | None = None
+    offDelaySec: int | None = Field(default=None, ge=1, le=3600)
+    enabled: bool | None = None
+    cameraIds: list[str] | None = None
+
+
+class LightingCommandRequest(BaseModel):
+    action: Literal["on", "off"]
+
+
+class PresenceEvent(BaseModel):
+    cameraId: str
+    present: bool
+    classes: list[str] = Field(default_factory=list)
+    ts: float | None = None
+
+
+class LightingTestResponse(BaseModel):
+    success: bool
+    message: str
+    status: ControllerStatus

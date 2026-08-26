@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -40,3 +40,37 @@ class Camera(Base):
     fps: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
     scene_type: Mapped[str] = mapped_column(String(32), nullable=False, default="office")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class LightingController(Base):
+    __tablename__ = "lighting_controllers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[str] = mapped_column(String(32), nullable=False, default="imperium")
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False, default=90)
+    username: Mapped[str] = mapped_column(String(255), nullable=False, default="TRION")
+    password: Mapped[str] = mapped_column(String(255), nullable=False, default="TRION1")
+    off_delay_sec: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    camera_links: Mapped[list["CameraControllerLink"]] = relationship(
+        back_populates="controller", cascade="all, delete-orphan"
+    )
+
+
+class CameraControllerLink(Base):
+    __tablename__ = "camera_controller_links"
+    __table_args__ = (UniqueConstraint("camera_id", "controller_id", name="uq_camera_controller"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    camera_id: Mapped[str] = mapped_column(String(64), ForeignKey("cameras.id", ondelete="CASCADE"), nullable=False)
+    controller_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("lighting_controllers.id", ondelete="CASCADE"), nullable=False
+    )
+
+    controller: Mapped["LightingController"] = relationship(back_populates="camera_links")
