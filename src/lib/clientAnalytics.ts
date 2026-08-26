@@ -3,6 +3,15 @@ import type { DetectionFrame } from './detections';
 
 const TARGET_INTERVAL_MS = 1000 / 12;
 
+export function isCorsCaptureError(error: unknown) {
+  const name = error instanceof DOMException ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    name === 'SecurityError' ||
+    /(?:taint(?:ed)?|cross[- ]origin|cors|insecure)/i.test(message)
+  );
+}
+
 function mediaSize(media: HTMLVideoElement | HTMLImageElement) {
   if (media instanceof HTMLVideoElement) {
     return { width: media.videoWidth, height: media.videoHeight };
@@ -14,6 +23,7 @@ export function useClientAnalytics(
   mediaRef: RefObject<HTMLVideoElement | HTMLImageElement | null>,
   cameraId: string,
   enabled: boolean,
+  onCaptureError?: (error: unknown) => void,
 ) {
   const [frame, setFrame] = useState<DetectionFrame | null>(null);
   const [ready, setReady] = useState(false);
@@ -23,10 +33,23 @@ export function useClientAnalytics(
   const inflightRef = useRef(false);
   const lastSentRef = useRef(0);
   const generationRef = useRef(0);
+  const workerReadyRef = useRef(false);
   const enabledRef = useRef(enabled);
+  const onCaptureErrorRef = useRef(onCaptureError);
   enabledRef.current = enabled;
+  onCaptureErrorRef.current = onCaptureError;
 
   useEffect(() => {
+    if (!enabled) return;
+    if (workerRef.current) {
+      if (workerReadyRef.current) {
+        setReady(true);
+        setLoading(false);
+        setError(null);
+      }
+      return;
+    }
+
     setLoading(true);
     setReady(false);
     setError(null);
@@ -34,20 +57,20 @@ export function useClientAnalytics(
     inflightRef.current = false;
     lastSentRef.current = 0;
 
-    let cancelled = false;
     const worker = new Worker(new URL('../workers/analyticsWorker.ts', import.meta.url), {
       type: 'module',
     });
     workerRef.current = worker;
 
     worker.onmessage = (event: MessageEvent) => {
-      if (cancelled) return;
+      if (workerRef.current !== worker) return;
       const data = event.data as
         | { type: 'ready' }
         | { type: 'result'; frame: DetectionFrame; generation: number }
         | { type: 'error'; message: string; generation?: number };
 
       if (data.type === 'ready') {
+        workerReadyRef.current = true;
         setReady(true);
         setLoading(false);
         setError(null);
@@ -55,6 +78,7 @@ export function useClientAnalytics(
       }
       if (data.type === 'error') {
         if (data.generation !== undefined && data.generation !== generationRef.current) return;
+        workerReadyRef.current = false;
         setError(data.message || 'Аналитика недоступна');
         setLoading(false);
         setReady(false);
@@ -70,7 +94,8 @@ export function useClientAnalytics(
     };
 
     worker.onerror = () => {
-      if (cancelled) return;
+      if (workerRef.current !== worker) return;
+      workerReadyRef.current = false;
       setError('Аналитика недоступна');
       setLoading(false);
       setReady(false);
@@ -79,14 +104,19 @@ export function useClientAnalytics(
     };
 
     worker.postMessage({ type: 'init' });
+  }, [enabled]);
 
-    return () => {
-      cancelled = true;
+  useEffect(
+    () => () => {
+      generationRef.current += 1;
       inflightRef.current = false;
-      worker.terminate();
-      if (workerRef.current === worker) workerRef.current = null;
-    };
-  }, []);
+      workerReadyRef.current = false;
+      const worker = workerRef.current;
+      workerRef.current = null;
+      worker?.terminate();
+    },
+    [],
+  );
 
   useEffect(() => {
     generationRef.current += 1;
@@ -146,6 +176,7 @@ export function useClientAnalytics(
           setFrame(null);
           setReady(false);
           setError(err instanceof Error ? err.message : 'Не удалось захватить кадр');
+          onCaptureErrorRef.current?.(err);
         }
       }
     };

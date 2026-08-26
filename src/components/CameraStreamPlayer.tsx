@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import type { Camera } from '../lib/mockData';
-import { useClientAnalytics } from '../lib/clientAnalytics';
+import { isCorsCaptureError, useClientAnalytics } from '../lib/clientAnalytics';
 import {
   getProxiedStreamUrl,
   isHlsUrl,
@@ -26,6 +26,7 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
   const [analyticsReady, setAnalyticsReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const proxyFallbackAttemptedRef = useRef(false);
 
   const isHls = isHlsUrl(camera.sourceUrl);
   const proxiedUrl = useMemo(() => getProxiedStreamUrl(camera.id), [camera.id, retryKey]);
@@ -45,17 +46,40 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
 
   const analyticsEnabled = analyticsReady;
   const mediaRef = showVideo ? videoRef : imgRef;
+  const handleAnalyticsCaptureError = useCallback(
+    (error: unknown) => {
+      if (
+        useProxy ||
+        isHls ||
+        proxyFallbackAttemptedRef.current ||
+        !shouldUseDirectStream(camera) ||
+        !isCorsCaptureError(error)
+      ) {
+        return;
+      }
+      proxyFallbackAttemptedRef.current = true;
+      setUseProxy(true);
+      setStreamState('loading');
+    },
+    [camera, isHls, useProxy],
+  );
   const {
     frame: detectionFrame,
     ready: analyticsReadyFlag,
     loading: analyticsLoading,
     error: analyticsError,
-  } = useClientAnalytics(mediaRef, camera.id, analyticsEnabled);
+  } = useClientAnalytics(
+    mediaRef,
+    camera.id,
+    analyticsEnabled,
+    handleAnalyticsCaptureError,
+  );
   // HLS must use backend proxy so Referer/UA are applied server-side.
   const hlsSourceUrl = isHls ? proxiedUrl : directUrl;
 
   useEffect(() => {
     setStreamState('loading');
+    proxyFallbackAttemptedRef.current = false;
     setUseProxy(!shouldUseDirectStream(camera));
     onStateChange?.('loading');
   }, [camera.id, camera.sourceType, camera.sourceUrl, onStateChange]);
@@ -119,6 +143,7 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
 
   const handleError = () => {
     if (!useProxy && shouldUseDirectStream(camera) && !isHls) {
+      proxyFallbackAttemptedRef.current = true;
       setUseProxy(true);
       setStreamState('loading');
       return;
@@ -154,6 +179,7 @@ export default function CameraStreamPlayer({ camera, onStateChange }: CameraStre
         <button
           onClick={() => {
             setStreamState('loading');
+            proxyFallbackAttemptedRef.current = false;
             setUseProxy(!shouldUseDirectStream(camera));
             setRetryKey((k) => k + 1);
           }}
