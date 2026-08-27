@@ -1,9 +1,12 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
@@ -12,6 +15,8 @@ from app.lighting.engine import ControllerView, ScenarioEngine
 from app.models import CameraControllerLink, LightingController
 from app.routers import auth, cameras, lighting
 from app.seed import seed_if_empty
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 logger = logging.getLogger(__name__)
 
@@ -111,3 +116,21 @@ app.include_router(lighting.router)
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# Serve the Vite build when present (Docker / production). API routes stay first.
+if STATIC_DIR.is_dir():
+    assets_dir = STATIC_DIR / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/")
+    async def spa_index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/{full_path:path}")
+    async def spa_assets(full_path: str) -> FileResponse:
+        candidate = STATIC_DIR / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(STATIC_DIR / "index.html")

@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      DATABASE_URL: sqlite:///./data/videolight.db
+    volumes:
+      - videolight-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  videolight-data:
